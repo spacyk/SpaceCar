@@ -2,13 +2,17 @@ import os
 import asyncio
 import argparse
 from json import loads
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiohttp
 import aiofiles
 
 
 JWT_TOKEN = os.environ.get("JWT_TOKEN", "")
+
+
+class AuthenticationError(Exception):
+    pass
 
 
 async def get_geojson(filepath):
@@ -25,64 +29,66 @@ def get_file_path():
     return args.file
 
 
-def get_request_payload(geojson):
-    request_payload = {
-        "ranges": [
-        {
-            "from": "2016-05",
-            "to": "2017-06"
-        }
-        ],
-        "geojson": geojson
-    }
-
-    return request_payload
-
-
-async def test_request(json_data):
+class ApiEngine:
     headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post('https://spaceknow-credits.appspot.com/credits/area/allocate-geojson', headers=headers, json=json_data) as resp:
-            print(resp.status)
-            return await resp.json()
+    tasking_api_address = 'https://spaceknow-tasking.appspot.com/tasking/get-status'
 
+    def __init__(self, api_address):
+        self.api_address = api_address
 
-async def tasking_request(pipeline_id):
-    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post('https://spaceknow-tasking.appspot.com/tasking/get-status', headers=headers, json=dict(pipelineId=pipeline_id)) as resp:
-            print(resp.status)
-            return await resp.json()
-
-
-class RagnarApiEngine:
-    address = 'https://spaceknow-imagery.appspot.com'
-
-    def __init__(self, geojson):
-        self.datetime = datetime.now().strftime("%Y-%m-%d 00:00:00")
-        self.geojson = geojson
-        self.search_payload = self.get_search_payload()
-
-    async def initiate_search(self):
-        headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+    async def _make_request(self, address, payload):
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                    f'{self.address}/imagery/search/initiate',
-                    headers=headers,
-                    json=self.search_payload
+                    f'{address}',
+                    headers=self.headers,
+                    json=payload
             ) as resp:
-                print(resp.status)
-                return await resp.json()
+                response = await resp.json()
+                if resp.status != 200:
+                    error = response.get('error', None)
+                    if error == 'INVALID-AUTHORIZATION-HEADER':
+                        raise AuthenticationError('Invalid token used')
+                    else:
+                        raise Exception(response.get('errorMessage', None))
+                return response
 
-    def get_search_payload(self):
+    @staticmethod
+    def _prepare_initiate_payload(geojson, days_ago=90):
+        past_datetime = datetime.now() - timedelta(days=days_ago)
+
         request_payload = {
             "provider": "gbdx",
             "dataset": "idaho-pansharpened",
-            "startDatetime": self.datetime,
-            "extent": self.geojson
+            "startDatetime": past_datetime.strftime("%Y-%m-%d 00:00:00"),
+            "extent": geojson
         }
-
         return request_payload
+
+    async def _initiate(self, geojson):
+        initiate_payload = self._prepare_initiate_payload(geojson)
+        return await self._make_request(f'{self.api_address}/initiate', initiate_payload)
+
+    async def _retrieve(self):
+        return await self._make_request(f'{self.api_address}/retrieve', {})
+
+    async def _get_status(self, pipeline_id):
+        return await self._make_request(self.tasking_api_address, {'pipelineId': pipeline_id})
+
+    async def get_data(self, geojson):
+        initiate_response = await self._initiate(geojson)
+        next_try, pipeline_id = initiate_response.get('nextTry'), initiate_response.get('pipelineId')
+
+        while True:
+            await asyncio.sleep(next_try)
+            status_response = await self._get_status(pipeline_id)
+            status = status_response.get('status', '')
+            if status == "RESOLVED":
+                break
+            if status == "FAILED":
+                raise Exception(f"An error occurred during processing pipeline {pipeline_id}")
+            next_try = status_response.get('nextTry', 100)
+
+        return pipeline_id
 
 
 async def main():
@@ -90,13 +96,9 @@ async def main():
 
     geojson = await get_geojson(file_path)
 
-    #json_payload = get_request_payload(geojson)
-    #response = await test_request(json_payload)
-    #print(response)
+    ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
 
-    ragnar_api = RagnarApiEngine(geojson)
-
-    resp = ragnar_api.initiate_search()
+    resp = await ragnar_search_api.get_data(geojson)
     print(resp)
 
 
