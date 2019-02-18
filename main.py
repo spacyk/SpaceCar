@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 import aiohttp
 import aiofiles
+from PIL import Image
 
 
 JWT_TOKEN = os.environ.get("JWT_TOKEN", "")
@@ -15,8 +16,8 @@ class AuthenticationError(Exception):
     pass
 
 
-async def get_geojson(filepath):
-    async with aiofiles.open(filepath, mode='r') as f:
+async def get_geojson(file_path):
+    async with aiofiles.open(file_path, mode='r') as f:
         geojson = await f.read()
         return loads(geojson)
 
@@ -27,17 +28,6 @@ def get_file_path():
                         type=str)
     args = parser.parse_args()
     return args.file
-
-
-def get_best_scene(scenes):
-    best_scene = None
-    for scene in scenes['results']:
-        if scene.get('cloudCover', 1) <= 0.30:
-            if not best_scene:
-                best_scene = scene
-            elif scene['bands'][0]['gsd'] < best_scene['bands'][0]['gsd']:
-                best_scene = scene
-    return best_scene if best_scene else scenes['results'][0]
 
 
 class ApiEngine:
@@ -91,43 +81,99 @@ class ApiEngine:
         return retrieve_response
 
 
-def get_search_payload(geojson, days_ago=90):
-    past_datetime = datetime.now() - timedelta(days=days_ago)
+class CarVisualizer:
+    def __init__(self):
+        self.ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
+        self.kraken_imagery_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/imagery/geojson')
+        self.kraken_cars_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/cars/geojson')
 
-    request_payload = {
-        "provider": "gbdx",
-        "dataset": "idaho-pansharpened",
-        "startDatetime": past_datetime.strftime("%Y-%m-%d 00:00:00"),
-        "extent": geojson
-    }
-    return request_payload
+    @staticmethod
+    def get_best_scene(scenes):
+        best_scene = None
+        for scene in scenes['results']:
+            if scene.get('cloudCover', 1) <= 0.30:
+                if not best_scene:
+                    best_scene = scene
+                elif scene['bands'][0]['gsd'] < best_scene['bands'][0]['gsd']:
+                    best_scene = scene
+        return best_scene if best_scene else scenes['results'][0]
 
+    @staticmethod
+    def get_search_payload(geojson, days_ago=90):
+        past_datetime = datetime.now() - timedelta(days=days_ago)
 
-def get_release_payload(geojson, scene_id):
-    request_payload = {
-        "sceneId": scene_id,
-        "extent": geojson
-    }
-    return request_payload
+        request_payload = {
+            "provider": "gbdx",
+            "dataset": "idaho-pansharpened",
+            "startDatetime": past_datetime.strftime("%Y-%m-%d 00:00:00"),
+            "extent": geojson
+        }
+        return request_payload
+
+    @staticmethod
+    def get_release_payload(geojson, scene_id):
+        request_payload = {
+            "sceneId": scene_id,
+            "extent": geojson
+        }
+        return request_payload
+
+    async def get_scene_maps(self, geojson):
+        resp = await self.ragnar_search_api.get_data(self.get_search_payload(geojson))
+
+        best_scene = self.get_best_scene(resp)
+
+        imagery_map = await self.kraken_imagery_api.get_data(self.get_release_payload(geojson, best_scene['sceneId']))
+        cars_map = await self.kraken_cars_api.get_data(self.get_release_payload(geojson, best_scene['sceneId']))
+
+        return imagery_map, cars_map
+
+    async def save_map_images(self, imagery_map, cars_map):
+        if not os.path.exists('./output'):
+            os.makedirs('./output')
+        for tile in imagery_map['tiles']:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'https://spaceknow-kraken.appspot.com/kraken/grid/{imagery_map["mapId"]}/-/{tile[0]}/{tile[1]}/{tile[2]}/truecolor.png') as resp:
+                    if resp.status != 200:
+                        response = await resp.json()
+                        # Maybe only console log is better
+                        raise Exception(response.get('errorMessage', None))
+                    #async with aiofiles.open(f'./output/{tile[1]}{tile[2]}.png', 'wb') as f:
+                        #await f.write(await resp.read())
+                    background = await resp.read()
+                async with session.get(f'https://spaceknow-kraken.appspot.com/kraken/grid/{cars_map["mapId"]}/-/{tile[0]}/{tile[1]}/{tile[2]}/cars.png') as resp:
+                    if resp.status != 200:
+                        response = await resp.json()
+                        raise Exception(response.get('errorMessage', None))
+                    #async with aiofiles.open(f'./output/cars{tile[1]}{tile[2]}.png', 'wb') as f:
+                        #await f.write(await resp.read())
+                    foreground = await resp.read()
+                    async with aiofiles.open(f'./output/{tile[1]}{tile[2]}.png', 'wb') as f:
+                        backgroundI = Image.open(background)
+                        await f.write(background)
+
+        """
+        background = Image.open("../Desktop/ground1.png")
+        ...: foreground = Image.open("../Desktop/cars1.png")
+        ...:
+        ...: background.paste(foreground, (0, 0), foreground)
+        ...: background.save("new.png", "PNG")
+        """
+
 
 async def main():
-    file_path = get_file_path()
 
-    geojson = await get_geojson(file_path)
+    #file_path = get_file_path()
+    #geojson = await get_geojson(file_path)
 
-    ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
-    kraken_imagery_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/imagery/geojson')
-    kraken_cars_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/cars/geojson')
+    car_visualizer = CarVisualizer()
 
-    resp = await ragnar_search_api.get_data(get_search_payload(geojson))
+    #imagery_map, cars_map = await car_visualizer.get_scene_maps(geojson)
 
-    best_scene = get_best_scene(resp)
-
-    imagery_map = await kraken_imagery_api.get_data(get_release_payload(geojson, best_scene['sceneId']))
-
-    cars_map = await kraken_cars_api.get_data(get_release_payload(geojson, best_scene['sceneId']))
-
-    print(imagery_map, cars_map)
+    #print(imagery_map, cars_map)
+    imagery_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImltYWdlcnkiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTIiLCJleHAiOjE1ODE5ODQ2NjQsInRpbGVzIjpbeyJ4Ijo2MDY0MCwieSI6Mzc5NTYsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9LHsieCI6NjA2MzksInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fV19.K2YxlWUzdDFQjTOBpZi2B2PksRlcjEv7gVyn4aJE4ms', 'maxZoom': 19, 'tiles': [[16, 60640, 37956], [16, 60639, 37955], [16, 60639, 37956], [16, 60640, 37955]]}
+    cars_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImNhcnMiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTguMCIsImV4cCI6MTU4MTk4NDY3MSwidGlsZXMiOlt7IngiOjYwNjM5LCJ5IjozNzk1Niwiem9vbSI6MTZ9LHsieCI6NjA2NDAsInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9XX0.UwPbVDEJCyKhgTchHchfYvZTGAGARlfjNFZw0wAXB1s', 'maxZoom': 19, 'tiles': [[16, 60639, 37956], [16, 60640, 37956], [16, 60640, 37955], [16, 60639, 37955]]}
+    await car_visualizer.save_map_images(imagery_map, cars_map)
 
 
 if __name__ == "__main__":
