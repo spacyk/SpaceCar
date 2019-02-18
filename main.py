@@ -3,11 +3,14 @@ import asyncio
 import argparse
 from json import loads
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 
 import aiohttp
 import aiofiles
 from PIL import Image
 
+io_pool_exc = ThreadPoolExecutor()
 
 JWT_TOKEN = os.environ.get("JWT_TOKEN", "")
 
@@ -120,9 +123,7 @@ class CarVisualizer:
 
     async def get_scene_maps(self, geojson):
         resp = await self.ragnar_search_api.get_data(self.get_search_payload(geojson))
-
         best_scene = self.get_best_scene(resp)
-
         imagery_map = await self.kraken_imagery_api.get_data(self.get_release_payload(geojson, best_scene['sceneId']))
         cars_map = await self.kraken_cars_api.get_data(self.get_release_payload(geojson, best_scene['sceneId']))
 
@@ -131,48 +132,40 @@ class CarVisualizer:
     async def save_map_images(self, imagery_map, cars_map):
         if not os.path.exists('./output'):
             os.makedirs('./output')
-        for tile in imagery_map['tiles']:
-            async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
+            for tile in imagery_map['tiles']:
                 async with session.get(f'https://spaceknow-kraken.appspot.com/kraken/grid/{imagery_map["mapId"]}/-/{tile[0]}/{tile[1]}/{tile[2]}/truecolor.png') as resp:
                     if resp.status != 200:
                         response = await resp.json()
                         # Maybe only console log is better
                         raise Exception(response.get('errorMessage', None))
-                    #async with aiofiles.open(f'./output/{tile[1]}{tile[2]}.png', 'wb') as f:
-                        #await f.write(await resp.read())
                     background = await resp.read()
                 async with session.get(f'https://spaceknow-kraken.appspot.com/kraken/grid/{cars_map["mapId"]}/-/{tile[0]}/{tile[1]}/{tile[2]}/cars.png') as resp:
                     if resp.status != 200:
                         response = await resp.json()
                         raise Exception(response.get('errorMessage', None))
-                    #async with aiofiles.open(f'./output/cars{tile[1]}{tile[2]}.png', 'wb') as f:
-                        #await f.write(await resp.read())
                     foreground = await resp.read()
-                    async with aiofiles.open(f'./output/{tile[1]}{tile[2]}.png', 'wb') as f:
-                        backgroundI = Image.open(background)
-                        await f.write(background)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(io_pool_exc, self.merge_files, background, foreground, f'{tile[1]}{tile[2]}')
 
-        """
-        background = Image.open("../Desktop/ground1.png")
-        ...: foreground = Image.open("../Desktop/cars1.png")
-        ...:
-        ...: background.paste(foreground, (0, 0), foreground)
-        ...: background.save("new.png", "PNG")
-        """
-
+    @staticmethod
+    def merge_files(background, foreground, name):
+        background_image = Image.open(BytesIO(background))
+        foreground_image = Image.open(BytesIO(foreground))
+        background_image.paste(foreground_image, (0, 0), foreground_image)
+        background_image.save(f"./output/{name}.png", "PNG")
 
 async def main():
 
-    #file_path = get_file_path()
-    #geojson = await get_geojson(file_path)
+    file_path = get_file_path()
+    geojson = await get_geojson(file_path)
 
     car_visualizer = CarVisualizer()
 
-    #imagery_map, cars_map = await car_visualizer.get_scene_maps(geojson)
+    imagery_map, cars_map = await car_visualizer.get_scene_maps(geojson)
 
-    #print(imagery_map, cars_map)
-    imagery_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImltYWdlcnkiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTIiLCJleHAiOjE1ODE5ODQ2NjQsInRpbGVzIjpbeyJ4Ijo2MDY0MCwieSI6Mzc5NTYsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9LHsieCI6NjA2MzksInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fV19.K2YxlWUzdDFQjTOBpZi2B2PksRlcjEv7gVyn4aJE4ms', 'maxZoom': 19, 'tiles': [[16, 60640, 37956], [16, 60639, 37955], [16, 60639, 37956], [16, 60640, 37955]]}
-    cars_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImNhcnMiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTguMCIsImV4cCI6MTU4MTk4NDY3MSwidGlsZXMiOlt7IngiOjYwNjM5LCJ5IjozNzk1Niwiem9vbSI6MTZ9LHsieCI6NjA2NDAsInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9XX0.UwPbVDEJCyKhgTchHchfYvZTGAGARlfjNFZw0wAXB1s', 'maxZoom': 19, 'tiles': [[16, 60639, 37956], [16, 60640, 37956], [16, 60640, 37955], [16, 60639, 37955]]}
+    #imagery_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImltYWdlcnkiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTIiLCJleHAiOjE1ODE5ODQ2NjQsInRpbGVzIjpbeyJ4Ijo2MDY0MCwieSI6Mzc5NTYsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9LHsieCI6NjA2MzksInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fV19.K2YxlWUzdDFQjTOBpZi2B2PksRlcjEv7gVyn4aJE4ms', 'maxZoom': 19, 'tiles': [[16, 60640, 37956], [16, 60639, 37955], [16, 60639, 37956], [16, 60640, 37955]]}
+    #cars_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImNhcnMiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTguMCIsImV4cCI6MTU4MTk4NDY3MSwidGlsZXMiOlt7IngiOjYwNjM5LCJ5IjozNzk1Niwiem9vbSI6MTZ9LHsieCI6NjA2NDAsInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9XX0.UwPbVDEJCyKhgTchHchfYvZTGAGARlfjNFZw0wAXB1s', 'maxZoom': 19, 'tiles': [[16, 60639, 37956], [16, 60640, 37956], [16, 60640, 37955], [16, 60639, 37955]]}
     await car_visualizer.save_map_images(imagery_map, cars_map)
 
 
