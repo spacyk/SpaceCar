@@ -106,7 +106,7 @@ class ApiEngine:
         return retrieve_response
 
 
-class CarVisualizer:
+class SpaceCar:
     """
     This class implements all the methods needed to get scenes providing geojson polygon, to get map grids with ground
      and car visualized images, to create merged images with ground satellite image as a background and also to save
@@ -278,7 +278,7 @@ async def main():
     file_path = get_file_path()
     geojson = await get_geojson(file_path)
 
-    car_visualizer = CarVisualizer()
+    car_visualizer = SpaceCar()
     scenes = await car_visualizer.get_all_scenes(geojson)
     best_scene = car_visualizer.choose_best_scene(scenes)
 
