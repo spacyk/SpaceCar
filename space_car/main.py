@@ -36,11 +36,10 @@ async def main():
     file_path = get_file_path()
     geojson = await get_geojson(file_path)
 
-    car_visualizer = SpaceCar()
-    scenes = await car_visualizer.get_all_scenes(geojson)
-    best_scene = car_visualizer.choose_best_scene(scenes)
+    scenes = await SpaceCar.get_all_scenes(geojson)
+    best_scene = SpaceCar.choose_best_scene(scenes)
 
-    await car_visualizer.process_scene(geojson, best_scene)
+    await SpaceCar.process_scene(geojson, best_scene)
 
 if __name__ == "__main__":
     asyncio.run(main())

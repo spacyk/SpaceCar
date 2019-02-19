@@ -17,17 +17,14 @@ io_pool_exc = ThreadPoolExecutor()
 
 class SpaceCar:
     """
-    This class implements all the methods needed to get scenes providing geojson polygon, to get map grids with ground
-     and car visualized images, to create merged images with ground satellite image as a background and also to save
-     these images to the drive.
+    This processing static class implements all the methods needed to get info about available scenes, get map grids
+    with ground and car visualized images, to create merged images with ground satellite image as a background and also
+    to save these images to the drive.
+    Prepare all the API instances needed to get requested scenes and images
     """
-    def __init__(self):
-        """
-        Init all the API instances that are needed to get requested scenes and images
-        """
-        self.ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
-        self.kraken_imagery_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/imagery/geojson')
-        self.kraken_cars_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/cars/geojson')
+    ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
+    kraken_imagery_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/imagery/geojson')
+    kraken_cars_api = ApiEngine('https://spaceknow-kraken.appspot.com/kraken/release/cars/geojson')
 
     @staticmethod
     def _get_search_payload(geojson, days_ago):
@@ -79,14 +76,15 @@ class SpaceCar:
                 raise Exception(response.get('error', None), response.get('errorMessage', None))
             return await resp.read()
 
-    async def get_all_scenes(self, geojson, days_ago=90):
+    @classmethod
+    async def get_all_scenes(cls, geojson, days_ago=90):
         """
         Get all available scenes not older then days_ago parameter, for the extent specified by geojson
         :param geojson: Map extent specified in geojson format
         :param days_ago: not older than
         :return: all obtained scenes
         """
-        scenes = await self.ragnar_search_api.get_data(self._get_search_payload(geojson, days_ago))
+        scenes = await cls.ragnar_search_api.get_data(cls._get_search_payload(geojson, days_ago))
         logging.info("Scenes from search api were obtained")
         return scenes
 
@@ -110,7 +108,8 @@ class SpaceCar:
         logging.info(f"Scene {best_scene['sceneId']} was chosen")
         return best_scene
 
-    async def get_scene_maps(self, geojson, scene):
+    @classmethod
+    async def get_scene_maps(cls, geojson, scene):
         """
         Asynchronously get both, imagery and cars grid maps for the provided scene
         :param geojson: Map extent specified in geojson format
@@ -118,8 +117,8 @@ class SpaceCar:
         :return: maps
         """
         tasks = [
-            self.kraken_imagery_api.get_data(self._get_release_payload(geojson, scene['sceneId'])),
-            self.kraken_cars_api.get_data(self._get_release_payload(geojson, scene['sceneId']))
+            cls.kraken_imagery_api.get_data(cls._get_release_payload(geojson, scene['sceneId'])),
+            cls.kraken_cars_api.get_data(cls._get_release_payload(geojson, scene['sceneId']))
         ]
 
         imagery_map, cars_map = await asyncio.gather(*tasks)
@@ -127,7 +126,8 @@ class SpaceCar:
 
         return imagery_map, cars_map
 
-    async def get_scene_images(self, imagery_map, cars_map):
+    @classmethod
+    async def get_scene_images(cls, imagery_map, cars_map):
         """
         Get all images from both maps
         :param imagery_map:
@@ -137,9 +137,9 @@ class SpaceCar:
         async with aiohttp.ClientSession() as session:
             image_components = []
             for tile in imagery_map['tiles']:
-                background = await self._get_file(session, imagery_map['mapId'], tile)
-                foreground = await self._get_file(session, cars_map['mapId'], tile, file_type='cars.png')
-                info = await self._get_file(session, cars_map['mapId'], tile, file_type='area.json')
+                background = await cls._get_file(session, imagery_map['mapId'], tile)
+                foreground = await cls._get_file(session, cars_map['mapId'], tile, file_type='cars.png')
+                info = await cls._get_file(session, cars_map['mapId'], tile, file_type='area.json')
                 image_name = f'{tile[1]}-{tile[2]}'
                 image_components.append((background, foreground, info, image_name))
 
@@ -154,7 +154,6 @@ class SpaceCar:
         :param scene: scene used to identify output folder
         :return:
         """
-        os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
         output_folder = f'{os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))}/../output'
         scene_name = scene['datetime'].replace(' ', '_')
         if not os.path.exists(output_folder):
@@ -172,14 +171,15 @@ class SpaceCar:
             obj.close()
         logging.info(f"Images successfully saved to ./output/{scene_name}")
 
-    async def process_scene(self, geojson, scene):
+    @classmethod
+    async def process_scene(cls, geojson, scene):
         """
         Process one scene - get maps, get images, save them
         :param geojson: Map extent specified in geojson format
         :param scene:
         :return:
         """
-        imagery_map, cars_map = await self.get_scene_maps(geojson, scene)
-        image_components = await self.get_scene_images(imagery_map, cars_map)
+        imagery_map, cars_map = await cls.get_scene_maps(geojson, scene)
+        image_components = await cls.get_scene_images(imagery_map, cars_map)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(io_pool_exc, self.save_scene_images, image_components, scene)
+        await loop.run_in_executor(io_pool_exc, cls.save_scene_images, image_components, scene)
