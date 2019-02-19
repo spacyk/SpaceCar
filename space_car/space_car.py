@@ -17,10 +17,9 @@ io_pool_exc = ThreadPoolExecutor()
 
 
 class SpaceCar:
-    """
-    This processing static class implements all the methods needed to get info about available scenes, get map grids
-    with ground and car visualized images, to create merged images with ground satellite image as a background and also
-    to save these images to the drive.
+    """This static class is used for processing and implements all the methods needed to get info about available
+    scenes, to get map grids with ground and car visualized images, to create merged images with ground satellite image
+    as a background and also to save these images to drive.
     Prepare all the API instances needed to get requested scenes and images
     """
     ragnar_search_api = ApiEngine('https://spaceknow-imagery.appspot.com/imagery/search')
@@ -29,8 +28,8 @@ class SpaceCar:
 
     @staticmethod
     def _get_search_payload(geojson, days_ago):
-        """
-        Prepare and get payload for Ragnar API search endpoint
+        """Prepare and get payload for Ragnar API search endpoint
+
         :param geojson: Map extent specified in geojson format
         :param days_ago: Number of days ago, since you want to obtain scenes
         :return: payload
@@ -47,7 +46,8 @@ class SpaceCar:
 
     @staticmethod
     def _get_release_payload(geojson, scene_id):
-        """
+        """Prepare and get payload for Kraken API release endpoint
+
         :param geojson: Map extent specified in geojson format
         :param scene_id: id of the scene
         :return: payload
@@ -60,8 +60,8 @@ class SpaceCar:
 
     @staticmethod
     async def _get_file(session, map_id, tile_coordinates, file_type='truecolor.png'):
-        """
-        Get grid file from the address determined by all the parameters
+        """Get grid file from the address determined by all the parameters
+
         :param session: http session given to the method
         :param map_id: id of the map
         :param tile_coordinates: coordinates of the maps grid
@@ -79,8 +79,8 @@ class SpaceCar:
 
     @classmethod
     async def get_all_scenes(cls, geojson, days_ago=90):
-        """
-        Get all available scenes not older then days_ago parameter, for the extent specified by geojson
+        """Get all available scenes not older then days_ago parameter, for the extent specified by geojson
+
         :param geojson: Map extent specified in geojson format
         :param days_ago: not older than
         :return: all obtained scenes
@@ -91,9 +91,9 @@ class SpaceCar:
 
     @staticmethod
     def choose_best_scene(scenes):
-        """
-        Choose one from the obtained scenes. Decide based on visibility of the scene and chose the scene with the
+        """Choose one from the obtained scenes. Decide based on visibility of the scene and chose the scene with the
         highest resolution.
+
         :param scenes: List of scenes
         :return: the chosen scene
         """
@@ -111,8 +111,8 @@ class SpaceCar:
 
     @classmethod
     async def get_scene_maps(cls, geojson, scene):
-        """
-        Asynchronously get both, imagery and cars grid maps for the provided scene
+        """Asynchronously get both, imagery and cars grid maps for the provided scene
+
         :param geojson: Map extent specified in geojson format
         :param scene:
         :return: maps
@@ -129,8 +129,8 @@ class SpaceCar:
 
     @classmethod
     async def get_scene_images(cls, imagery_map, cars_map):
-        """
-        Get all images from both maps
+        """Get all images from both maps
+
         :param imagery_map:
         :param cars_map:
         :return: list of image components - background, foreground image, detections info, image identification
@@ -149,8 +149,8 @@ class SpaceCar:
 
     @staticmethod
     def save_scene_images(image_components, scene):
-        """
-        Merge all background images with their respective foreground image and save them on the drive
+        """Merge all background images with their respective foreground image and save them on the drive
+
         :param image_components: image component from get_map_image
         :param scene: scene used to identify output folder
         :return:
@@ -175,8 +175,8 @@ class SpaceCar:
 
     @classmethod
     async def process_scene(cls, geojson, scene):
-        """
-        Process one scene - get maps, get images, save them
+        """Process one scene - get maps, get images, save them
+
         :param geojson: Map extent specified in geojson format
         :param scene:
         :return:

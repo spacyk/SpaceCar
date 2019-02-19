@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO)
 
 
 async def get_geojson(file_path):
-    """
-    Load geojson from file containing extent that you want to analyze
+    """Load geojson from file containing extent that you want to analyze
+
     :param file_path:
     :return: geojson dict
     """
@@ -22,8 +22,8 @@ async def get_geojson(file_path):
 
 
 def get_file_path():
-    """
-    Get path of the geojson file as an script argument
+    """Get path of the geojson file as an script argument
+
     :return: Path to the file
     """
     parser = argparse.ArgumentParser()

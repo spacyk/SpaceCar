@@ -13,8 +13,7 @@ class AuthenticationError(Exception):
 
 
 class ApiEngine:
-    """
-    This class can be used with any asynchronous API endpoint that creates pipeline and needs some processing time to
+    """This class can be used with any asynchronous API endpoint that creates pipeline and needs some processing time to
     get data from retrieve endpoint. Use public get_data method.
     """
     headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
@@ -50,8 +49,8 @@ class ApiEngine:
         return await self._make_request(self.tasking_api_address, {'pipelineId': pipeline_id})
 
     async def get_data(self, initiate_payload):
-        """
-        Creates pipeline, waits until it is processed and returns response from retrieve endpoint
+        """Creates pipeline, waits until it is processed and returns response from retrieve endpoint
+
         :param initiate_payload: payload for specific /initiate endpoint
         :return: json data from retrieve endpoint
         """
