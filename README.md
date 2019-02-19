@@ -7,7 +7,7 @@ Client script that uses https://docs.spaceknow.com/ APIs to localize and count n
 ```
 pip install -r requirements.txt
 
-python main.py <path-to-geojson>
+python space_car/main.py <path-to-geojson>
 
 ```
 #### Env vars
