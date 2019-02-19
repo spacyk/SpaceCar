@@ -1,109 +1,18 @@
 import os
+import inspect
 import asyncio
-import argparse
-from json import loads
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
-import aiofiles
 from PIL import Image
 
-logging.basicConfig(level=logging.INFO)
+from api_engine import ApiEngine
+
 
 io_pool_exc = ThreadPoolExecutor()
-
-JWT_TOKEN = os.environ.get("JWT_TOKEN", "")
-
-
-class AuthenticationError(Exception):
-    pass
-
-
-async def get_geojson(file_path):
-    """
-    Load geojson from file containing extent that you want to analyze
-    :param file_path:
-    :return: geojson dict
-    """
-    async with aiofiles.open(file_path, mode='r') as f:
-        geojson = await f.read()
-        return loads(geojson)
-
-
-def get_file_path():
-    """
-    Get path of the geojson file as an script argument
-    :return: Path to the file
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("file", help="enter path to the GeoJSON file", type=str)
-    args = parser.parse_args()
-    return args.file
-
-
-class ApiEngine:
-    """
-    This class can be used with any asynchronous API endpoint that creates pipeline and needs some processing time to
-    get data from retrieve endpoint. Use public get_data method.
-    """
-    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-    tasking_api_address = 'https://spaceknow-tasking.appspot.com/tasking/get-status'
-
-    def __init__(self, api_address):
-        self.api_address = api_address
-
-    async def _make_request(self, address, payload):
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                    address,
-                    headers=self.headers,
-                    json=payload
-            ) as resp:
-                response = await resp.json()
-                if resp.status != 200:
-                    error = response.get('error', None)
-                    if error == 'INVALID-AUTHORIZATION-HEADER':
-                        raise AuthenticationError('Invalid token used')
-                    else:
-                        raise Exception(error, response.get('errorMessage', None))
-                logging.info(f"Request to {address} was successful")
-                return response
-
-    async def _initiate(self, initiate_payload):
-        return await self._make_request(f'{self.api_address}/initiate', initiate_payload)
-
-    async def _retrieve(self, pipeline_id):
-        return await self._make_request(f'{self.api_address}/retrieve', {'pipelineId': pipeline_id})
-
-    async def _get_status(self, pipeline_id):
-        return await self._make_request(self.tasking_api_address, {'pipelineId': pipeline_id})
-
-    async def get_data(self, initiate_payload):
-        """
-        Creates pipeline, waits until it is processed and returns response from retrieve endpoint
-        :param initiate_payload: payload for specific /initiate endpoint
-        :return: json data from retrieve endpoint
-        """
-        initiate_response = await self._initiate(initiate_payload)
-        next_try, pipeline_id = initiate_response.get('nextTry'), initiate_response.get('pipelineId')
-
-        while True:
-            logging.info(f"Waiting {next_try} seconds for next {pipeline_id} pipeline id check")
-            await asyncio.sleep(next_try)
-            status_response = await self._get_status(pipeline_id)
-            status = status_response.get('status', '')
-            if status == "RESOLVED":
-                break
-            if status == "FAILED":
-                raise Exception(f"An error occurred during processing pipeline {pipeline_id}")
-            next_try = status_response.get('nextTry', 100)
-
-        retrieve_response = await self._retrieve(pipeline_id)
-
-        return retrieve_response
 
 
 class SpaceCar:
@@ -245,18 +154,20 @@ class SpaceCar:
         :param scene: scene used to identify output folder
         :return:
         """
+        os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+        output_folder = f'{os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))}/../output'
         scene_name = scene['datetime'].replace(' ', '_')
-        if not os.path.exists('./output'):
-            os.makedirs('./output')
-        if not os.path.exists(f'./output/{scene_name}'):
-            os.makedirs(f'./output/{scene_name}')
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        if not os.path.exists(f'{output_folder}/{scene_name}'):
+            os.makedirs(f'{output_folder}/{scene_name}')
 
         for background, foreground, info, image_name in image_components:
             background_image = Image.open(BytesIO(background))
             foreground_image = Image.open(BytesIO(foreground))
             background_image.paste(foreground_image, (0, 0), foreground_image)
-            background_image.save(f"./output/{scene_name}/{image_name}.png", "PNG")
-            obj = open(f"./output/{scene_name}/{image_name}.json", 'wb')
+            background_image.save(f"{output_folder}/{scene_name}/{image_name}.png", "PNG")
+            obj = open(f"{output_folder}/{scene_name}/{image_name}.json", 'wb')
             obj.write(info)
             obj.close()
         logging.info(f"Images successfully saved to ./output/{scene_name}")
@@ -272,17 +183,3 @@ class SpaceCar:
         image_components = await self.get_scene_images(imagery_map, cars_map)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(io_pool_exc, self.save_scene_images, image_components, scene)
-
-
-async def main():
-    file_path = get_file_path()
-    geojson = await get_geojson(file_path)
-
-    car_visualizer = SpaceCar()
-    scenes = await car_visualizer.get_all_scenes(geojson)
-    best_scene = car_visualizer.choose_best_scene(scenes)
-
-    await car_visualizer.process_scene(geojson, best_scene)
-
-if __name__ == "__main__":
-    asyncio.run(main())
