@@ -203,59 +203,86 @@ class CarVisualizer:
 
     async def get_scene_maps(self, geojson, scene):
         """
-        Get both imagery and cars grid maps for the provided scene
+        Asynchronously get both, imagery and cars grid maps for the provided scene
         :param geojson: Map extent specified in geojson format
         :param scene:
         :return: maps
         """
-        imagery_map = await self.kraken_imagery_api.get_data(self._get_release_payload(geojson, scene['sceneId']))
-        logging.info("Image map for imagery was obtained")
+        tasks = [
+            self.kraken_imagery_api.get_data(self._get_release_payload(geojson, scene['sceneId'])),
+            self.kraken_cars_api.get_data(self._get_release_payload(geojson, scene['sceneId']))
+        ]
 
-        cars_map = await self.kraken_cars_api.get_data(self._get_release_payload(geojson, scene['sceneId']))
-        logging.info("Image map for cars was obtained")
+        imagery_map, cars_map = await asyncio.gather(*tasks)
+        logging.info("Image maps for imagery and cars were obtained")
 
         return imagery_map, cars_map
 
-    async def get_map_images(self, imagery_map, cars_map):
+    async def get_scene_images(self, imagery_map, cars_map):
+        """
+        Get all images from both maps
+        :param imagery_map:
+        :param cars_map:
+        :return: list of image components - background, foreground image, info, image identification
+        """
         async with aiohttp.ClientSession() as session:
             image_components = []
             for tile in imagery_map['tiles']:
                 background = await self._get_file(session, imagery_map['mapId'], tile)
                 foreground = await self._get_file(session, cars_map['mapId'], tile, file_type='cars.png')
+                info = await self._get_file(session, cars_map['mapId'], tile, file_type='area.json')
                 image_name = f'{tile[1]}-{tile[2]}'
-                image_components.append((background, foreground, image_name))
+                image_components.append((background, foreground, info, image_name))
+
+            logging.info("Images were downloaded")
             return image_components
 
     @staticmethod
-    def save_all_images(image_components, scene):
+    def save_scene_images(image_components, scene):
+        """
+        Merge all background images with their respective foreground image and save them on the drive
+        :param image_components: image component from get_map_image
+        :param scene: scene used to identify output folder
+        :return:
+        """
         scene_name = scene['datetime'].replace(' ', '_')
         if not os.path.exists('./output'):
             os.makedirs('./output')
         if not os.path.exists(f'./output/{scene_name}'):
             os.makedirs(f'./output/{scene_name}')
 
-        for background, foreground, image_name in image_components:
+        for background, foreground, info, image_name in image_components:
             background_image = Image.open(BytesIO(background))
             foreground_image = Image.open(BytesIO(foreground))
             background_image.paste(foreground_image, (0, 0), foreground_image)
             background_image.save(f"./output/{scene_name}/{image_name}.png", "PNG")
+            obj = open(f"./output/{scene_name}/{image_name}.json", 'wb')
+            obj.write(info)
+            obj.close()
+        logging.info(f"Images successfully saved to ./output/{scene_name}")
+
+    async def process_scene(self, geojson, scene):
+        """
+        Process one scene - get maps, get images, save them
+        :param geojson: Map extent specified in geojson format
+        :param scene:
+        :return:
+        """
+        imagery_map, cars_map = await self.get_scene_maps(geojson, scene)
+        image_components = await self.get_scene_images(imagery_map, cars_map)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(io_pool_exc, self.save_scene_images, image_components, scene)
 
 
 async def main():
-
     file_path = get_file_path()
     geojson = await get_geojson(file_path)
 
     car_visualizer = CarVisualizer()
     scenes = await car_visualizer.get_all_scenes(geojson)
     best_scene = car_visualizer.choose_best_scene(scenes)
-    imagery_map, cars_map = await car_visualizer.get_scene_maps(geojson, best_scene)
-    # imagery_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImltYWdlcnkiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTIiLCJleHAiOjE1ODE5ODQ2NjQsInRpbGVzIjpbeyJ4Ijo2MDY0MCwieSI6Mzc5NTYsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9LHsieCI6NjA2MzksInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fV19.K2YxlWUzdDFQjTOBpZi2B2PksRlcjEv7gVyn4aJE4ms', 'maxZoom': 19, 'tiles': [[16, 60640, 37956], [16, 60639, 37955], [16, 60639, 37956], [16, 60640, 37955]]}
-    # cars_map = {'mapId': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJtYXBJZCI6Ikd1b0JGcXR1QmxsR3FaV0hiMzk1Vlh5dEJndG5YS1Y3ZU1wRm9BMXRvZzV0UXVJQ1dTaFFFSTFjRlMxYzZYNE95QV9MM3lucXowMk9xN283IiwibWFwVHlwZSI6ImNhcnMiLCJnZW9tZXRyeUlkIjoiNWZkNmM3ZDk2ZSIsInZlcnNpb24iOiIxNTguMCIsImV4cCI6MTU4MTk4NDY3MSwidGlsZXMiOlt7IngiOjYwNjM5LCJ5IjozNzk1Niwiem9vbSI6MTZ9LHsieCI6NjA2NDAsInkiOjM3OTU2LCJ6b29tIjoxNn0seyJ4Ijo2MDY0MCwieSI6Mzc5NTUsInpvb20iOjE2fSx7IngiOjYwNjM5LCJ5IjozNzk1NSwiem9vbSI6MTZ9XX0.UwPbVDEJCyKhgTchHchfYvZTGAGARlfjNFZw0wAXB1s', 'maxZoom': 19, 'tiles': [[16, 60639, 37956], [16, 60640, 37956], [16, 60640, 37955], [16, 60639, 37955]]}
 
-    image_components = await car_visualizer.get_map_images(imagery_map, cars_map)
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(io_pool_exc, car_visualizer.save_all_images, image_components, best_scene)
+    await car_visualizer.process_scene(geojson, best_scene)
 
 if __name__ == "__main__":
     asyncio.run(main())
