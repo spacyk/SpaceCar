@@ -86,7 +86,7 @@ class SpaceCar:
         """
         scenes = await cls.ragnar_search_api.get_data(cls._get_search_payload(geojson, days_ago))
         logging.info("Scenes from search api were obtained")
-        return scenes
+        return scenes['results']
 
     @staticmethod
     def choose_best_scene(scenes):
@@ -97,7 +97,7 @@ class SpaceCar:
         :return: the chosen scene
         """
         best_scene = None
-        for scene in scenes['results']:
+        for scene in scenes:
             if scene.get('cloudCover', 1) <= 0.30:
                 if not best_scene:
                     best_scene = scene
@@ -179,7 +179,13 @@ class SpaceCar:
         :param scene:
         :return:
         """
+        logging.info(f"Processing scene with id {scene['sceneId']}")
         imagery_map, cars_map = await cls.get_scene_maps(geojson, scene)
         image_components = await cls.get_scene_images(imagery_map, cars_map)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(io_pool_exc, cls.save_scene_images, image_components, scene)
+
+    @classmethod
+    async def process_scenes(cls, geojson, scenes):
+        tasks = [cls.process_scene(geojson, scene) for scene in scenes]
+        await asyncio.gather(*tasks)
