@@ -1,4 +1,5 @@
 import os
+import json
 import inspect
 import asyncio
 from datetime import datetime, timedelta
@@ -64,7 +65,7 @@ class SpaceCar:
         :param session: http session given to the method
         :param map_id: id of the map
         :param tile_coordinates: coordinates of the maps grid
-        :param file_type: type of the supported file: truecolor.png/cars.png/area.json...
+        :param file_type: type of the supported file: truecolor.png/cars.png/detections.geojson...
         :return: bytes file
         """
         async with session.get(
@@ -132,16 +133,16 @@ class SpaceCar:
         Get all images from both maps
         :param imagery_map:
         :param cars_map:
-        :return: list of image components - background, foreground image, info, image identification
+        :return: list of image components - background, foreground image, detections info, image identification
         """
         async with aiohttp.ClientSession() as session:
             image_components = []
             for tile in imagery_map['tiles']:
                 background = await cls._get_file(session, imagery_map['mapId'], tile)
                 foreground = await cls._get_file(session, cars_map['mapId'], tile, file_type='cars.png')
-                info = await cls._get_file(session, cars_map['mapId'], tile, file_type='area.json')
+                detections_info = await cls._get_file(session, cars_map['mapId'], tile, file_type='detections.geojson')
                 image_name = f'{tile[1]}-{tile[2]}'
-                image_components.append((background, foreground, info, image_name))
+                image_components.append((background, foreground, detections_info, image_name))
 
             logging.info("Images were downloaded")
             return image_components
@@ -161,14 +162,15 @@ class SpaceCar:
         if not os.path.exists(f'{output_folder}/{scene_name}'):
             os.makedirs(f'{output_folder}/{scene_name}')
 
-        for background, foreground, info, image_name in image_components:
+        for background, foreground, detections_info, image_name in image_components:
             background_image = Image.open(BytesIO(background))
             foreground_image = Image.open(BytesIO(foreground))
             background_image.paste(foreground_image, (0, 0), foreground_image)
             background_image.save(f"{output_folder}/{scene_name}/{image_name}.png", "PNG")
-            obj = open(f"{output_folder}/{scene_name}/{image_name}.json", 'wb')
-            obj.write(info)
-            obj.close()
+            file = open(f"{output_folder}/{scene_name}/{image_name}.json", 'w')
+            cars_count = len(json.loads(detections_info)['features'])
+            json.dump(dict(cars_count=cars_count), file)
+            file.close()
         logging.info(f"Images successfully saved to ./output/{scene_name}")
 
     @classmethod
@@ -187,5 +189,6 @@ class SpaceCar:
 
     @classmethod
     async def process_scenes(cls, geojson, scenes):
+        """Process multiple scenes"""
         tasks = [cls.process_scene(geojson, scene) for scene in scenes]
         await asyncio.gather(*tasks)
