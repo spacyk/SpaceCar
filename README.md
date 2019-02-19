@@ -1,7 +1,7 @@
 # SpaceCar
 
 ### Description
-Client script that uses https://docs.spaceknow.com/ API and platform to localize and count number of cars on the map extent defined by geojson polygon.
+Client script that uses https://docs.spaceknow.com/ APIs to localize and count number of cars on the map extent defined by geojson polygon.
 
 ### Usage
 ```
