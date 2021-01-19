@@ -1,7 +1,7 @@
 # SpaceEye
 
 ### Description
-Script that uses https://docs.spaceknow.com/ APIs to localize and count number of cars on the map extent defined by geojson polygon.
+Script that uses `asyncio` and https://docs.spaceknow.com/ APIs to localize and count number of cars on the map extent defined by geojson polygon.
 
 ### Usage
 
